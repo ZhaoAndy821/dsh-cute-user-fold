@@ -155,42 +155,79 @@ const HTML = `<!doctype html><html><head><meta charset="utf-8"><style>${CSS_FIXT
  * `window.__ModuleLoader__.load({id, factory})`，我们存下 factory 并执行它，
  * 拿到 `exports` 后按 DSH 客户端的做法调用 `apply(ctx)`。
  *
- * ⚠️ bundle 末尾会写 `exports.inject = …` / `return module.exports` ——
- * 这两个名字**不是全局的**，而是由 DSH 的 runner 以 **CommonJS 外壳**
- * 注入的作用域变量。因此这里必须用 `new Function('module','exports','require')`
- * 把源码包起来再执行；直接当普通 script 插入会抛 `ReferenceError: exports is not defined`，
- * 表现为「bundle 没有调用 __ModuleLoader__.load」这种误导性的报错。
+ * ⚠️ 2026-09-24 更正：这里曾断言「`module` / `exports` 由 DSH 的 runner 以
+ * **CommonJS 外壳**注入」，并据此用 `new Function('module','exports','require', source)`
+ * 把源码包起来执行。**该断言是错的** ——
+ * 夹具自己造了外壳，于是 `exports.inject = …` / `return module.exports`
+ * 在测试里能跑，真机却抛 `ReferenceError: exports is not defined`，
+ * 插件的 bundle **根本无法加载**（重启后整棵插件树报 Failed to load plugins）。
+ * 这是典型的**测试替 bug 背书**：夹具比运行时"宽容"，测试永远绿。
+ *
+ * 真相（`@deepseek-ai/dsh-client-modules/lib/client.js:16-21` 契约注释，逐字）：
+ *      factory(require) → exports
+ * loader **只注入 `require`**；工厂的**返回值**本身就是模块导出
+ * （runner 另会自己补 `name`：`dsh-cordis-client-runner/lib/client.js:613-620`）。
+ * 因此这里必须**不提供** `module` / `exports`，否则测不出真问题。
  */
 async function bootPlugin(page, src) {
   await page.evaluate((source) => {
     window.__cufLoaded = [];
+    window.__cufDisposers = [];
+    /**
+     * 复刻真实动态 ctx 的最小面。
+     *
+     * ⚠️ 必须提供 `effect`：本机实测 `ctx.effect` 在真实动态 ctx 上**存在且是
+     * 官方约定的清理入口**（runner 的白名单里有 `"effect"`，签名
+     * `ctx.effect(callback, label?) => () => void`；官方 ui-conversation 用了 9 次）。
+     * 第一版夹具只传 `{}`，于是插件里正确的 `ctx.effect(...)` 直接抛
+     * `TypeError: ctx.effect is not a function` —— 那是**夹具与运行时不一致**，不是插件的问题。
+     *
+     * 这里把 callback 的返回值（disposer）存进 `__cufDisposers`，供"场景 10 · 卸载清理"调用。
+     */
+    function makeCtx() {
+      return {
+        effect(callback) {
+          const disposer = callback();
+          window.__cufDisposers.push(disposer);
+          return () => {
+            if (typeof disposer === 'function') disposer();
+          };
+        },
+      };
+    }
+    window.__cufApply = function applyPlugin() {
+      const mod = window.__cufLoaded[0];
+      if (!mod) throw new Error('bundle 没有调用 __ModuleLoader__.load');
+      mod.exports.apply(makeCtx());
+      return mod;
+    };
     window.__ModuleLoader__ = {
       load(mod) {
-        const module = { exports: {} };
+        // 按真实 loader 的方式 materialize：**只传 require，取返回值当导出**。
         const res = mod.factory(() => {
           throw new Error('本插件不应有任何 require（零依赖）');
         });
-        window.__cufLoaded.push({ id: mod.id, exports: res ?? module.exports });
+        if (res === null || typeof res !== 'object') {
+          throw new Error(
+            'factory 必须返回模块导出对象，实测返回 ' + typeof res
+            + ' —— 真实 loader 只注入 require，不注入 module/exports（见文件头说明）。',
+          );
+        }
+        window.__cufLoaded.push({ id: mod.id, exports: res });
       },
     };
 
-    // CommonJS 外壳：与 DSH runner 注入的形态一致。
-    const shell = { exports: {} };
-    const factory = new Function(
-      'module',
-      'exports',
-      'require',
-      source,
-    );
-    factory(shell, shell.exports, () => {
-      throw new Error('本插件不应有任何 require（零依赖）');
-    });
+    // 按**真实 loader** 的方式执行源码：只装好 window.__ModuleLoader__，
+    // **不提供** module / exports。
+    // 若 bundle 里出现裸 `exports.x = …`，这里会真实地抛
+    // `ReferenceError: exports is not defined` —— 与浏览器现场完全一致，
+    // 而不会像旧夹具那样被外壳掩盖成"通过"。
+    const run = new Function(source);
+    run();
   }, src);
 
   await page.evaluate(() => {
-    const mod = window.__cufLoaded[0];
-    if (!mod) throw new Error('bundle 没有调用 __ModuleLoader__.load');
-    mod.exports.apply({});
+    window.__cufApply();
   });
 
   await settle(page);
@@ -410,7 +447,7 @@ try {
   section('场景 8 · 幂等 —— 重复应用不得重复插入');
 
   await page.evaluate(() => {
-    window.__cufLoaded[0].exports.apply({});
+    window.__cufApply();
   });
   await settle(page);
 
@@ -458,6 +495,173 @@ try {
     scaled.foldVar === `${CONTENT_H}px`,
     'JS 兜底值保持原样（设计如此：它只服务于不认 lh 的浏览器）',
     `--cuf-fold-h = ${scaled.foldVar}`,
+  );
+
+  // ── 场景 10：卸载清理（本插件第一版缺失的覆盖）──────────────────────────
+  // 为什么必须测：清理曾是死代码 —— 用了 `ctx.on('dispose', …)`，但 cordis **没有**
+  // `dispose` 事件（实测 emit 0 次），于是卸载时 observer 不断开、样式不移除、
+  // `data-cuf-*` 与按钮留在 DOM 里。它当时 40 项全绿，因为**没有任何一项碰清理**。
+  section('场景 10 · 卸载清理 —— disposer 必须真的断开与摘净');
+
+  const beforeDispose = await page.evaluate(() => ({
+    buttons: document.querySelectorAll('[data-cuf-toggle]').length,
+    styles: document.querySelectorAll('style[data-plugin-css]').length,
+    seen: document.querySelectorAll('[data-cuf-seen]').length,
+  }));
+
+  await page.evaluate(() => {
+    for (const dispose of window.__cufDisposers) {
+      if (typeof dispose === 'function') dispose();
+    }
+  });
+  await settle(page);
+
+  const afterDispose = await page.evaluate(() => ({
+    buttons: document.querySelectorAll('[data-cuf-toggle]').length,
+    styles: document.querySelectorAll('style[data-plugin-css]').length,
+    marked: document.querySelectorAll('[data-cuf-body],[data-cuf-folded],[data-cuf-open]').length,
+    seen: document.querySelectorAll('[data-cuf-seen]').length,
+  }));
+
+  assert(
+    beforeDispose.buttons >= 1,
+    '卸载前确有注入物（否则本场景无效）',
+    `按钮=${beforeDispose.buttons} 样式=${beforeDispose.styles} 标记行=${beforeDispose.seen}`,
+  );
+  assert(afterDispose.buttons === 0, '按钮已全部移除', `实得 ${afterDispose.buttons}`);
+  assert(afterDispose.styles === 0, '注入的样式表已移除', `实得 ${afterDispose.styles}`);
+  assert(afterDispose.marked === 0, 'data-cuf-body/folded/open 已全部摘除', `实得 ${afterDispose.marked}`);
+  assert(afterDispose.seen === 0, 'data-cuf-seen 已摘除（否则重装后会漏处理）', `实得 ${afterDispose.seen}`);
+
+  // 观察器必须真的断开：卸载后再插入长消息，不得再被折叠
+  await page.evaluate(() => {
+    const stack = document.querySelector('[data-chat-turn="1"]');
+    const row = document.createElement('div');
+    row.setAttribute('data-chat-flow-kind', 'user');
+    row.setAttribute('data-chat-turn', '99');
+    row.innerHTML = `<div class="TST_userStack"><div class="TST_bubble">${'卸载后新增的长消息\\n'.repeat(30)}</div></div>`;
+    stack?.parentElement?.appendChild(row);
+  });
+  await settle(page);
+
+  const afterUnloadInsert = await page.evaluate(() => ({
+    folded: document.querySelectorAll('[data-chat-turn="99"] [data-cuf-folded]').length,
+    buttons: document.querySelectorAll('[data-chat-turn="99"] [data-cuf-toggle]').length,
+  }));
+  assert(
+    afterUnloadInsert.folded === 0 && afterUnloadInsert.buttons === 0,
+    '卸载后不再处理新节点（观察器已断开）',
+    `折叠=${afterUnloadInsert.folded} 按钮=${afterUnloadInsert.buttons}`,
+  );
+
+  // ── 场景 11：短→长（文本节点增长路径）────────────────────────────────────
+  // 为什么必须测：曾真实存在双重缺陷 ——
+  //   ① 观察器只筛元素节点（nodeType===1），而"内容变长"常表现为 childList 里
+  //      新增/替换**文本节点**（nodeType===3）⇒ 这类变动被整类丢掉、永不重扫；
+  //   ② 已判"不够长"的行被标 seen 后不再评估。
+  // 两者叠加 ⇒ **短消息先渲染、随后变长就永远不折叠**（DSH 里真实可达）。
+  // 本场景在真 Chromium 里复现该路径，断言必须折叠。
+  section('场景 11 · 短消息随后变长 —— 必须重新评估并折叠');
+
+  // ⚠️ 场景 10 刚把所有实例卸载掉了（那是它的目的）。这里必须先重新挂载，
+  // 否则没有观察器在跑，本场景测的就不是"变长能否重评估"，而是"插件不在时会不会工作"。
+  await page.evaluate(() => { window.__cufDisposers.length = 0; window.__cufApply(); });
+  await settle(page);
+
+  await page.evaluate(() => {
+    const stack = document.querySelector('[data-chat-turn="1"]');
+    const row = document.createElement('div');
+    row.setAttribute('data-chat-flow-kind', 'user');
+    row.setAttribute('data-chat-turn', '88');
+    row.innerHTML = '<div class="TST_userStack"><div class="TST_bubble" id="grow">短消息只有一行</div></div>';
+    stack?.parentElement?.appendChild(row);
+  });
+  await settle(page);
+
+  const grownBefore = await probe(page, '#grow');
+  assert(
+    grownBefore !== null && grownBefore.folded === false,
+    '变长前不折叠（短消息零改动）',
+    `folded=${grownBefore?.folded}`,
+  );
+
+  // 只改文本内容 —— 与 DSH 里"异步补全/流式渲染"同形
+  await page.evaluate(() => {
+    const bubble = document.querySelector('#grow');
+    bubble.textContent = Array.from({ length: 30 }, (_, i) => `第 ${i + 1} 行内容`).join('\n');
+  });
+  await settle(page);
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 300)));
+
+  const grownAfter = await page.evaluate(() => {
+    const bubble = document.querySelector('#grow');
+    return {
+      folded: bubble?.hasAttribute('data-cuf-folded') ?? false,
+      buttons: document.querySelectorAll('[data-chat-turn="88"] [data-cuf-toggle]').length,
+      height: Math.round(bubble?.getBoundingClientRect().height ?? 0),
+    };
+  });
+  assert(
+    grownAfter.folded && grownAfter.buttons === 1,
+    '变长后自动折叠（文本节点增长必须触发重扫）',
+    `折叠=${grownAfter.folded} 按钮=${grownAfter.buttons} 高度=${grownAfter.height}px`,
+  );
+
+  // ── 场景 12：多实例 —— 卸载其一不得破坏另一个 ────────────────────────────
+  // 为什么必须测：曾用模块级共享状态（scheduled/pending/frameId/styleTag），
+  // 任一 disposer 会清空另一实例的调度，且先卸载的实例会删掉**不属于自己**的
+  // <style>，导致仍在运行的实例失去样式。
+  section('场景 12 · 多实例 —— 单独卸载任一实例不得破坏另一个');
+
+  const multi = await page.evaluate(() => {
+    window.__cufDisposers.length = 0;
+    window.__cufApply();                       // 实例 A
+    window.__cufApply();                       // 实例 B
+    return { disposeCount: window.__cufDisposers.length };
+  });
+  await settle(page);
+  assert(multi.disposeCount === 2, '两个实例各注册了一个 disposer', `实得 ${multi.disposeCount}`);
+
+  const beforeDisposeOne = await page.evaluate(() => ({
+    styles: document.querySelectorAll('style[data-plugin-css]').length,
+    buttons: document.querySelectorAll('[data-cuf-toggle]').length,
+  }));
+
+  // 只卸载其中一个实例
+  await page.evaluate(() => { window.__cufDisposers[0](); });
+  await settle(page);
+
+  const afterDisposeOne = await page.evaluate(() => ({
+    styles: document.querySelectorAll('style[data-plugin-css]').length,
+    buttons: document.querySelectorAll('[data-cuf-toggle]').length,
+  }));
+  assert(
+    afterDisposeOne.styles === 1,
+    '卸载其一后样式仍在（不得删掉不属于自己的 <style>）',
+    `卸载前 ${beforeDisposeOne.styles} → 卸载后 ${afterDisposeOne.styles}`,
+  );
+
+  // 仍在运行的实例必须还能工作：新增一条长消息应当被折叠
+  await page.evaluate(() => {
+    const stack = document.querySelector('[data-chat-turn="1"]');
+    const row = document.createElement('div');
+    row.setAttribute('data-chat-flow-kind', 'user');
+    row.setAttribute('data-chat-turn', '77');
+    row.innerHTML = '<div class="TST_userStack"><div class="TST_bubble">'
+      + Array.from({ length: 30 }, (_, i) => `第 ${i + 1} 行`).join('\n')
+      + '</div></div>';
+    stack?.parentElement?.appendChild(row);
+  });
+  await settle(page);
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 300)));
+
+  const survivorWorks = await page.evaluate(
+    () => document.querySelectorAll('[data-chat-turn="77"] [data-cuf-toggle]').length,
+  );
+  assert(
+    survivorWorks === 1,
+    '幸存实例仍能折叠新消息',
+    `按钮=${survivorWorks}`,
   );
 
   // ── 输出 ────────────────────────────────────────────────────────────────
