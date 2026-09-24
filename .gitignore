@@ -1,0 +1,28 @@
+# 依赖产物（运行时零依赖；node_modules/ 是开发依赖的安装产物）
+node_modules/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# 日志与临时文件
+*.log
+tmp/
+.tmp/
+
+# ⚠️ 关于 package-lock.json：**刻意入库，不要忽略**
+#
+# 本包把 `playwright-core` **精确锁**在某个版本（不加 `^`）。原因是它每个版本
+# 绑定一个特定的 Chromium build，而该 build 在受限网络下不一定能补下载；
+# 用范围约束会让 `npm install` 拉到需要另一个 build 的版本，导致 `verify.mjs`
+# 直接起不来浏览器（实测踩过）。既然版本是刻意锁的，锁文件就应当入库以固化
+# 整棵依赖树、保证他人可复现。
+#
+# 另有一条与本仓库无关但同样值得记住的教训 —— **忽略规则不覆盖 npm 打包维度**：
+# `npm pack` 不读 `.gitignore`，`package.json` 的 `files` 优先级更高，
+# 且还有 `.npmignore`、`export-ignore` 等多套规则极易漏。**敏感文件应当移出
+# 仓库目录**，而不是依赖任何一条忽略规则。发布前请实跑 `npm pack --dry-run`
+# 逐条核对清单，不要只 grep 工作树。

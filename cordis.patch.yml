@@ -1,0 +1,21 @@
+# dsh-cute-user-fold bundle patch
+#
+# 本包 `dsh.bundle.patch` 层。用官方 CLI 安装时
+#
+#   dsh plugin --profile web add <本包路径>
+#
+# 该命令会把 `dsh.profile.bundles` 与已装包对齐，看到这个声明就把
+# `dsh-cute-user-fold` 追加进 bundle 栈；profile 启动时合并本 patch
+# （就是下面这一条 insert）。
+#
+# ⚠️ 行里的 `id` 是 **cordis loader 行 id**（宿主侧命名空间），取短名即可，
+#    与 `lib/client.js` 里 `__ModuleLoader__.load({ id })` 的取值**无关**。
+#    后者的正确取值是**包名**（`package.json` 的 `name`）—— 契约见
+#    `dsh-client-plugin-css` 技能「两条最易踩的配置坑」。
+#    两者刻意不同，不是笔误。写错注册键的后果是**硬失败**：
+#    浏览器报 `bundle … loaded without registering "<包名>"`，整棵插件树加载失败。
+#
+# ⚠️ 本包不暴露任何可调参数（折叠行数、按钮文案全部内置）。因此**不写 `config:`**。
+- insert:
+    - id: cute-user-fold
+      name: 'dsh-cute-user-fold'

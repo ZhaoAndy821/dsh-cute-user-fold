@@ -1,0 +1,58 @@
+{
+  "name": "dsh-cute-user-fold",
+  "version": "0.1.0",
+  "private": true,
+  "description": "折叠 DSH 会话里过长的用户消息：超过阈值行数就收起，点击按钮展开。只依赖稳定语义属性，不引用构建哈希类名",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "styles",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "scripts": {
+    "lint": "node lint.mjs",
+    "verify": "node verify.mjs",
+    "test": "node lint.mjs && node verify.mjs",
+    "sync-css": "node sync-css.mjs"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "client-plugin",
+    "deepseek-harness",
+    "user-message",
+    "collapse",
+    "fold"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20",
+    "dsh": "0.1.5-rc.2"
+  },
+  "devDependencies": {
+    "playwright-core": "1.62.0"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  }
+}

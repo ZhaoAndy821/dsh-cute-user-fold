@@ -1,0 +1,13 @@
+# 统一换行符：仓库内一律用 LF。
+# Windows 检出时由 Git 按需转换，避免同一文件在不同机器上产生「整文件改动」的假 diff。
+#
+# 缺了本文件的后果不是报错，而是一堆 CRLF 警告 + 潜在的整文件假 diff ——
+# 属于「不痛但会持续烦人」的那类问题，所以从第一个提交起就带上。
+* text=auto eol=lf
+
+# 二进制资源不做换行转换（本包当前没有，留给将来加截图时用）
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
