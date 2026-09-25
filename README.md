@@ -5,10 +5,15 @@
 Collapses **over-long user messages** in a DSH conversation: anything past 8 lines is folded
 with a bottom fade, plus a button to expand.
 
-<!-- 预览图（图待补）：把图片放进 docs/preview/ 后，取消下面的注释即可
-![折叠态](docs/preview/collapsed.png)
-![展开态](docs/preview/expanded.png)
--->
+<p align="center">
+  <b>折叠态（默认）</b> —— 超过 8 行收起、底部渐隐、下方出现「展开」按钮<br>
+  <img src="docs/preview/collapsed.png" alt="折叠态：长用户消息被收成 8 行，底部渐隐，下方有「展开」按钮" width="100%">
+</p>
+
+<p align="center">
+  <b>展开态（点击后）</b> —— 完整显示，按钮变为「收起」<br>
+  <img src="docs/preview/expanded.png" alt="展开态：点击后消息完整显示" width="100%">
+</p>
 
 ---
 
