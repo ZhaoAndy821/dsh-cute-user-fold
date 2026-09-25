@@ -1,0 +1,53 @@
+# 每次 push / PR 自动跑本仓库的两道自检。
+#
+# 之所以需要它：这个包有 13 项静态约束 + 51 项真浏览器断言，但在此之前
+# **只有本地能跑** —— 推到远端之后没有任何自动检查，改了代码忘了跑测试
+# 不会有人告诉你。
+#
+# 注意本包**没有构建步骤**（零依赖、CSS 手写内联、协议包装手写），
+# 所以这里不涉及任何打包/发布环节，只做「跑测试」这一件事。
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 最小权限：本工作流只读代码，不写任何东西。
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # `npm ci` 而非 `npm install`：严格按 lockfile 装，保证可复现。
+      # 本包把 playwright-core 精确锁在一个版本（它每个版本绑定一个特定的
+      # Chromium build），所以 lockfile 必须被尊重。
+      - name: Install dev dependencies
+        run: npm ci
+
+      # 先跑 lint：秒级、零依赖。让它先失败可以让后续的浏览器下载白费掉 ——
+      # 没必要为了一个拼写错误去下 100MB 的 Chromium。
+      - name: Lint (static constraints, 13 checks)
+        run: npm run lint
+
+      # playwright-core **不含浏览器二进制**，必须显式安装。
+      # `--with-deps` 一并装上 Linux 侧的系统库（CI 里可用 sudo）。
+      - name: Install Chromium
+        run: npx playwright-core install --with-deps chromium
+
+      - name: Verify (headless Chromium, 51 assertions)
+        run: npm run verify
