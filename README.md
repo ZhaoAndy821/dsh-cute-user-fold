@@ -67,7 +67,7 @@ Fold height follows the user's font size automatically (no restart needed).
 ## Install
 
 ```bash
-dsh plugin --profile web add <path-to-this-package>
+dsh plugin --profile web add github:ZhaoAndy821/dsh-cute-user-fold
 ```
 
 Takes effect after that profile is **restarted** (the profile config is read at startup).
@@ -77,6 +77,9 @@ Uninstall:
 ```bash
 dsh plugin --profile web remove dsh-cute-user-fold
 ```
+
+**Requirements:** DSH `0.1.5-rc.2`, Node `>= 20`.
+(Installing from a local checkout works too — pass the directory path instead of the `github:` ref.)
 
 ## How it works
 
