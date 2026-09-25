@@ -2,24 +2,43 @@
 
 折叠 DSH 会话里**过长的用户消息** —— 超过 8 行的收起来，只留 8 行 + 一个「展开」按钮。
 
-DSH 默认把用户请求完整铺开（气泡是 `white-space: pre-wrap`，粘一段长文本就能撑出几十行），
-长会话因此变得臃肿。本插件让这类消息默认收起，点击展开、再点收起。
+Collapses **over-long user messages** in a DSH conversation: anything past 8 lines is folded
+with a bottom fade, plus a button to expand.
 
-## 安装
+<!-- 预览图（图待补）：把图片放进 docs/preview/ 后，取消下面的注释即可
+![折叠态](docs/preview/collapsed.png)
+![展开态](docs/preview/expanded.png)
+-->
 
-```bash
-dsh plugin --profile web add <本包路径>
-```
+---
 
-装完**重启该 profile** 才生效（配置在启动时读入）。
+## 为什么需要它 / Why
 
-卸载：
+DSH 默认把用户请求**完整铺开** —— 气泡是 `white-space: pre-wrap`，粘一段长文本就能撑出
+几十行，长会话因此变得臃肿。同类工具有把长输入收起的做法，而 DSH 本体没有：官方对
+消息气泡**没有任何高度限制**，官方那套 `data-turn-process-*` 折叠的是 **assistant 侧的
+回合过程**，并不覆盖用户消息（2026-09-25 实测，见下）。
 
-```bash
-dsh plugin --profile web remove dsh-cute-user-fold
-```
+DSH renders user requests in full: the bubble uses `white-space: pre-wrap`, so pasting a long
+block expands to dozens of lines and makes long sessions unwieldy. Other tools fold long inputs;
+DSH itself does not — the official bubble has **no height limit**, and the official
+`data-turn-process-*` machinery folds the **assistant-side turn process**, not user messages
+(measured 2026-09-25, see below).
 
-## 行为
+<details>
+<summary>如何确认官方没做 / How this was verified</summary>
+
+| 检查 | 结果 |
+|---|---|
+| 官方 `.bubble` 的 CSS | 只有 background / 字号 / 行高 / 圆角 / padding，**无任何高度限制** |
+| 官方 CSS 里的 `line-clamp` | 仅用于**回合预览气泡**（悬停预览卡），不是消息本体 |
+| `data-turn-process-*` 属性 | 属 `turn-process` 机制，折叠 **assistant 侧过程**；`user` 节点只被当作判定输入 |
+| 官方 200+ 包全量扫描 | 关于「折叠用户消息」的实现 **0 命中** |
+| 官方「折叠/收起/展开」文案（28 条） | 全是工具输出 / diff / 边栏 / trajectory / 问题卡片，**无一条指向用户消息** |
+
+</details>
+
+## 行为 / Behaviour
 
 | 情况 | 表现 |
 |---|---|
@@ -30,46 +49,81 @@ dsh plugin --profile web remove dsh-cute-user-fold
 | 流式新增的消息 | 由观察器自动处理，无需刷新 |
 | 助手侧的消息 | **不受影响**（作用域限定在 `data-chat-flow-kind="user"`） |
 
+Messages of 8 lines or fewer are **completely untouched** — no attributes, no injected nodes, no
+styles. Anything longer folds to 8 lines with a bottom fade and an expand button. Streaming
+messages are picked up by an observer; assistant-side content is out of scope.
+
 用户中途改字号时，折叠高度会自动跟随行高，无需重启。
 
-## 工作原理
+Fold height follows the user's font size automatically (no restart needed).
 
-「折叠」有两个纯 CSS 做不到的动作：**按内容长度决定要不要折叠**（CSS 无法测量高度）、
-**点击展开**（CSS 没有点击状态）。所以本插件是 **JS 打标记 + CSS 呈现**：
+---
 
-```
-JS：在 [data-chat-flow-kind="user"] 范围内找到气泡 → 量高度 → 超长则打标记 + 插按钮
-CSS：只认自己的 data-cuf-* 属性，负责视觉呈现
-```
-
-**JS 侧唯一一次触碰构建哈希类名**是在 `data-chat-flow-kind="user"` 限定范围内匹配
-`[class*="_bubble"]`（只用 CSS Module 的**语义后缀**，不用哈希前缀）；此后一律只认本插件
-自己的属性。这是经过取舍的：气泡内容没有任何无条件的官方语义属性可用，
-详见 [docs/DOM-FORENSICS.md](docs/DOM-FORENSICS.md)。
-
-## 自检
+## Install
 
 ```bash
-npm install          # 开发依赖：playwright-core（仅测试用，已精确锁版本）
+dsh plugin --profile web add <path-to-this-package>
+```
+
+Takes effect after that profile is **restarted** (the profile config is read at startup).
+
+Uninstall:
+
+```bash
+dsh plugin --profile web remove dsh-cute-user-fold
+```
+
+## How it works
+
+Folding needs two things plain CSS cannot do: **measuring** the rendered height (to decide
+whether a message is "too long"), and **handling a click** (to expand). So this plugin is
+**JS marks elements, CSS renders**:
+
+```
+JS  : inside [data-chat-flow-kind="user"], find the bubble, measure it;
+      if too long, mark it with data-cuf-* and inject a button
+CSS : keys off this plugin's own data-cuf-* attributes only
+```
+
+The one place the JS touches a build-hashed class is a single match of the `_bubble` **semantic
+suffix**, always **scoped inside** `[data-chat-flow-kind="user"]` — an attribute DSH's own
+stylesheet already uses, so it is treated as a public contract. The element is then re-marked
+with this plugin's own attribute, and the stylesheet never sees a hashed name.
+
+Fold height is `max-height: calc(8lh)` so it tracks the element's own line-height, with a
+JS-computed pixel value as a fallback for browsers that do not support the `lh` unit.
+
+Anchor forensics — what was measured, on which package, and which alternatives were rejected —
+are in [docs/DOM-FORENSICS.md](docs/DOM-FORENSICS.md).
+
+## Self-check
+
+```bash
+npm install          # dev dependency: playwright-core (test-only, pinned exactly)
 npm test             # = lint + verify
 ```
 
-- **`lint.mjs`（13 项）** —— 静态约束。检查两处 CSS 副本是否一致、注册键是否等于包名、
-  有无引用构建哈希类名、有无写死颜色、有无覆盖官方几何等。
-- **`verify.mjs`（51 项）** —— 真 headless Chromium 里复刻 DOM、**真实执行** `lib/client.js`，
-  断言折叠/展开/误伤/幂等/字号跟随等行为。
+- **`lint.mjs` (13 checks)** — static constraints: the two CSS copies agree, the bundle
+  registration key equals the package name, no build-hashed class names, no literal colors, no
+  overridden official geometry.
+- **`verify.mjs` (51 assertions)** — a real headless Chromium renders a replica of the DOM and
+  **actually executes** `lib/client.js`, asserting fold/expand, non-interference with
+  assistant-side content, idempotence, and font-size following.
 
-> `verify.mjs` 抓出过一个光读代码发现不了的真实缺陷：`max-height` 在 `content-box` 下
-> **只限制内容区**，上下 padding 额外加在外层 —— 第一版把 padding 算进 max-height，
-> 每条折叠消息都高出 20px。
+> `verify.mjs` caught a defect that reading the code could not: `max-height` applies to the
+> **content box** only, so padding adds on top — the first version folded every message 20px too
+> tall. An earlier revision of its harness also **covered for a real bug** by inventing a
+> CommonJS shim the runtime does not actually provide.
 
-## 已知限制
+## Known limitations
 
-- **依赖 `[class*="_bubble"]` 这一处语义后缀**。DSH 若改动该 CSS Module 的命名，
-  插件会静默停止工作（不报错、不折叠）。这是当前可用的最稳锚点，详见取证文档。
-- 只折叠**用户消息**。折叠回合/工具/思考块不在范围内。
-- 折叠状态不跨会话持久化：刷新后回到默认折叠。
+- **Depends on one semantic suffix** (`[class*="_bubble"]`). If DSH renames that CSS Module, the
+  plugin stops working **silently** (no error, no folding). Scoping the match inside
+  `[data-chat-flow-kind="user"]` keeps the blast radius minimal; the hardening path is for DSH to
+  give the bubble an unconditional semantic attribute.
+- **User messages only.** Folding turns / tool calls / thinking blocks is out of scope.
+- **Fold state is not persisted** across reloads — messages start folded again.
 
-## 许可
+## License
 
 MIT
