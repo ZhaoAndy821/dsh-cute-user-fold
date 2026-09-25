@@ -56,7 +56,7 @@ npm test             # = lint + verify
 
 - **`lint.mjs`（13 项）** —— 静态约束。检查两处 CSS 副本是否一致、注册键是否等于包名、
   有无引用构建哈希类名、有无写死颜色、有无覆盖官方几何等。
-- **`verify.mjs`（40 项）** —— 真 headless Chromium 里复刻 DOM、**真实执行** `lib/client.js`，
+- **`verify.mjs`（51 项）** —— 真 headless Chromium 里复刻 DOM、**真实执行** `lib/client.js`，
   断言折叠/展开/误伤/幂等/字号跟随等行为。
 
 > `verify.mjs` 抓出过一个光读代码发现不了的真实缺陷：`max-height` 在 `content-box` 下
